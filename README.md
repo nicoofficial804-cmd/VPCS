@@ -228,19 +228,6 @@ Add:
 ```env
 GROQ_API_KEY=gsk_your_api_key_here
 ```
-
-Never commit your `.env` file.
-
-Add this to `.gitignore`:
-
-```gitignore
-.env
-.venv/
-vpcs_memory/
-__pycache__/
-*.pyc
-```
-
 ---
 
 # Running VPCS
