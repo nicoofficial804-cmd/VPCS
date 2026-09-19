@@ -27,7 +27,16 @@ from groq import Groq, GroqError
 
 VERSION = "1.2.0"
 
-BASE_DIR = Path(__file__).resolve().parent
+# Nuitka --onefile estrae il programma in /tmp/onefile_*
+# quindi __file__ NON rappresenta la directory dell'eseguibile.
+#
+# Se siamo compilati, usiamo la directory dell'eseguibile.
+# Se siamo in Python normale, usiamo la directory di main.py.
+
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys.executable).resolve().parent
+else:
+    BASE_DIR = Path(__file__).resolve().parent
 
 ENV_FILE = BASE_DIR / ".env"
 POOLTOYS_DIR = BASE_DIR / "pooltoys"
@@ -35,7 +44,7 @@ MEMORY_DIR = BASE_DIR / "vpcs_memory"
 LOG_DIR = BASE_DIR / "logs"
 
 for directory in (POOLTOYS_DIR, MEMORY_DIR, LOG_DIR):
-    directory.mkdir(exist_ok=True)
+    directory.mkdir(parents=True, exist_ok=True)
 
 load_dotenv(ENV_FILE)
 
@@ -46,6 +55,7 @@ load_dotenv(ENV_FILE)
 
 def setup_logging(verbose=False):
     """Configura logging su file (sempre) e console (solo se verbose)."""
+
     log_file = LOG_DIR / f"vpcs_{datetime.now(timezone.utc):%Y%m%d}.log"
 
     logger = logging.getLogger("vpcs")
@@ -78,7 +88,7 @@ log = setup_logging()
 
 
 # ============================================================
-# AI SETTINGS (override via variabili ambiente / .env)
+# AI SETTINGS
 # ============================================================
 
 MODEL = os.environ.get("VPCS_MODEL", "openai/gpt-oss-120b")
@@ -91,8 +101,6 @@ REQUEST_TIMEOUT = float(os.environ.get("VPCS_TIMEOUT", "30"))
 MAX_RETRIES = int(os.environ.get("VPCS_MAX_RETRIES", "2"))
 MAX_INPUT_CHARS = int(os.environ.get("VPCS_MAX_INPUT_CHARS", "4000"))
 
-# Codici di stato HTTP per cui ha senso ritentare (errori transitori).
-# Tutto il resto (401, 400, 404, ...) è un errore permanente: niente retry.
 RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 
 
@@ -100,7 +108,6 @@ RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 # TERMINAL COLORS
 # ============================================================
 
-# Se l'output non è un terminale (es. redirect su file), disabilita i colori
 _USE_COLOR = sys.stdout.isatty()
 
 RESET = "\033[0m" if _USE_COLOR else ""
@@ -180,10 +187,12 @@ def load_pooltoy_config(path):
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
+
     except json.JSONDecodeError as e:
         error(f"{path.name}: JSON non valido ({e})")
         log.warning("JSON non valido in %s: %s", path, e)
         return None
+
     except OSError as e:
         error(f"{path.name}: impossibile leggere ({e})")
         log.error("Errore lettura %s: %s", path, e)
@@ -242,20 +251,35 @@ def select_pooltoy(preselect_name=None):
         print()
         info(f"Cartella: {POOLTOYS_DIR}")
         info("Inserisci almeno un file .json valido.")
+        info("Per favore leggi il README su Github per capire come mettere un pooltoy")
         print()
         raise SystemExit(1)
 
     if preselect_name:
-        matches = [p for p in pooltoys if p["name"].lower() == preselect_name.lower()]
+        matches = [
+            p for p in pooltoys
+            if p["name"].lower() == preselect_name.lower()
+        ]
+
         if matches:
             selected = matches[0]
-            success(f"Pooltoy caricato: {selected['emoji']} {selected['name']}")
+            success(
+                f"Pooltoy caricato: "
+                f"{selected['emoji']} {selected['name']}"
+            )
             return selected
-        warning(f"Nessun pooltoy chiamato '{preselect_name}', passo alla selezione manuale.")
+
+        warning(
+            f"Nessun pooltoy chiamato '{preselect_name}', "
+            "passo alla selezione manuale."
+        )
 
     if len(pooltoys) == 1:
         selected = pooltoys[0]
-        success(f"Pooltoy caricato: {selected['emoji']} {selected['name']}")
+        success(
+            f"Pooltoy caricato: "
+            f"{selected['emoji']} {selected['name']}"
+        )
         return selected
 
     print()
@@ -264,14 +288,23 @@ def select_pooltoy(preselect_name=None):
 
     for index, pooltoy in enumerate(pooltoys, start=1):
         filename = pooltoy["file"].name
-        print(f"  {color(str(index), CYAN)} {pooltoy['emoji']} {pooltoy['name']} {color(f'[{filename}]', DIM)}")
+
+        print(
+            f"  {color(str(index), CYAN)} "
+            f"{pooltoy['emoji']} "
+            f"{pooltoy['name']} "
+            f"{color(f'[{filename}]', DIM)}"
+        )
 
     print_line()
     print()
 
     while True:
         try:
-            choice = input(color("Select pooltoy › ", CYAN)).strip()
+            choice = input(
+                color("Select pooltoy › ", CYAN)
+            ).strip()
+
         except (KeyboardInterrupt, EOFError):
             print()
             raise SystemExit(0)
@@ -287,8 +320,13 @@ def select_pooltoy(preselect_name=None):
             continue
 
         selected = pooltoys[index - 1]
+
         print()
-        success(f"Selected {selected['emoji']} {selected['name']}")
+        success(
+            f"Selected "
+            f"{selected['emoji']} {selected['name']}"
+        )
+
         return selected
 
 
@@ -297,7 +335,11 @@ def select_pooltoy(preselect_name=None):
 # ============================================================
 
 def safe_filename(name):
-    cleaned = "".join(c if c.isalnum() or c in "-_" else "_" for c in name.lower())
+    cleaned = "".join(
+        c if c.isalnum() or c in "-_" else "_"
+        for c in name.lower()
+    )
+
     return cleaned or "pooltoy"
 
 
@@ -316,15 +358,26 @@ def load_memory(pooltoy):
             data = json.load(f)
 
         if isinstance(data, list):
-            # scarta elementi malformati invece di far fallire tutto
             return [
-                m for m in data
-                if isinstance(m, dict) and m.get("role") in ("user", "assistant") and m.get("content")
+                m
+                for m in data
+                if (
+                    isinstance(m, dict)
+                    and m.get("role") in ("user", "assistant")
+                    and m.get("content")
+                )
             ]
 
     except (json.JSONDecodeError, OSError) as e:
-        log.warning("Memoria corrotta per %s: %s", pooltoy["name"], e)
-        warning(f"Memoria corrotta, verrà ignorata ({path.name}).")
+        log.warning(
+            "Memoria corrotta per %s: %s",
+            pooltoy["name"],
+            e,
+        )
+
+        warning(
+            f"Memoria corrotta, verrà ignorata ({path.name})."
+        )
 
     return []
 
@@ -341,12 +394,22 @@ def save_memory(pooltoy, memory):
         )
 
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(memory, f, ensure_ascii=False, indent=2)
+            json.dump(
+                memory,
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
 
         os.replace(temp_path, path)
 
     except OSError as e:
-        log.error("Errore salvataggio memoria per %s: %s", pooltoy["name"], e)
+        log.error(
+            "Errore salvataggio memoria per %s: %s",
+            pooltoy["name"],
+            e,
+        )
+
         warning(f"Errore salvataggio memoria: {e}")
 
 
@@ -356,8 +419,14 @@ def clear_memory(pooltoy):
     try:
         if path.exists():
             path.unlink()
+
     except OSError as e:
-        log.error("Errore cancellazione memoria per %s: %s", pooltoy["name"], e)
+        log.error(
+            "Errore cancellazione memoria per %s: %s",
+            pooltoy["name"],
+            e,
+        )
+
         warning(f"Errore cancellazione memoria: {e}")
 
 
@@ -380,7 +449,10 @@ def create_client():
         print()
         raise SystemExit(1)
 
-    return Groq(api_key=api_key, timeout=REQUEST_TIMEOUT)
+    return Groq(
+        api_key=api_key,
+        timeout=REQUEST_TIMEOUT,
+    )
 
 
 # ============================================================
@@ -388,38 +460,54 @@ def create_client():
 # ============================================================
 
 def _is_retryable(exc):
-    """True solo per errori transitori (rete, rate limit, 5xx)."""
     status = getattr(exc, "status_code", None)
+
     if status is not None:
         return status in RETRYABLE_STATUS_CODES
-    # Nessun status_code disponibile: tratta come non recuperabile
-    # per evitare di ritentare inutilmente su errori di configurazione.
+
     return False
 
 
 def ask_ai(client, pooltoy, user_message, memory):
-    """Invia la richiesta a Groq con retry solo su errori transitori."""
 
     if len(user_message) > MAX_INPUT_CHARS:
         raise ValueError(
-            f"Messaggio troppo lungo ({len(user_message)} caratteri, "
+            f"Messaggio troppo lungo "
+            f"({len(user_message)} caratteri, "
             f"massimo {MAX_INPUT_CHARS})."
         )
 
-    messages = [{"role": "system", "content": pooltoy["prompt"]}]
+    messages = [
+        {
+            "role": "system",
+            "content": pooltoy["prompt"],
+        }
+    ]
 
     for message in memory:
         role = message.get("role")
         content = message.get("content")
-        if role in ("user", "assistant") and content:
-            messages.append({"role": role, "content": content})
 
-    messages.append({"role": "user", "content": user_message})
+        if role in ("user", "assistant") and content:
+            messages.append(
+                {
+                    "role": role,
+                    "content": content,
+                }
+            )
+
+    messages.append(
+        {
+            "role": "user",
+            "content": user_message,
+        }
+    )
 
     last_error = None
     response = None
 
     for attempt in range(1, MAX_RETRIES + 2):
+
         try:
             response = client.chat.completions.create(
                 model=MODEL,
@@ -428,39 +516,67 @@ def ask_ai(client, pooltoy, user_message, memory):
                 max_tokens=MAX_TOKENS,
                 reasoning_format="hidden",
             )
+
             break
 
         except GroqError as e:
-            log.warning("Errore Groq (tentativo %d): %s", attempt, e)
+
+            log.warning(
+                "Errore Groq (tentativo %d): %s",
+                attempt,
+                e,
+            )
 
             if not _is_retryable(e):
-                raise RuntimeError(f"Errore API non recuperabile: {e}") from e
+                raise RuntimeError(
+                    f"Errore API non recuperabile: {e}"
+                ) from e
 
             last_error = e
+
             if attempt > MAX_RETRIES:
-                raise RuntimeError(f"Errore API dopo {attempt} tentativi: {e}") from e
+                raise RuntimeError(
+                    f"Errore API dopo {attempt} tentativi: {e}"
+                ) from e
 
     if response is None:
-        raise RuntimeError(f"Errore API: {last_error}")
+        raise RuntimeError(
+            f"Errore API: {last_error}"
+        )
 
     if not response.choices:
-        raise RuntimeError("Risposta API senza scelte disponibili.")
+        raise RuntimeError(
+            "Risposta API senza scelte disponibili."
+        )
 
     choice = response.choices[0]
     answer = choice.message.content
 
     if not answer:
-        finish_reason = getattr(choice, "finish_reason", "unknown")
-        raise RuntimeError(f"Risposta vuota dal modello (finish_reason={finish_reason})")
+        finish_reason = getattr(
+            choice,
+            "finish_reason",
+            "unknown",
+        )
+
+        raise RuntimeError(
+            "Risposta vuota dal modello "
+            f"(finish_reason={finish_reason})"
+        )
 
     answer = answer.strip()
 
     if len(answer) > MAX_ANSWER_CHARS:
         log.info(
             "Risposta troncata da %d a %d caratteri.",
-            len(answer), MAX_ANSWER_CHARS,
+            len(answer),
+            MAX_ANSWER_CHARS,
         )
-        answer = answer[:MAX_ANSWER_CHARS].rstrip() + "…"
+
+        answer = (
+            answer[:MAX_ANSWER_CHARS].rstrip()
+            + "…"
+        )
 
     return answer
 
@@ -476,11 +592,23 @@ def show_status(pooltoy, memory):
 
     print(f"  Runtime      : {color('ONLINE', GREEN)}")
     print(f"  Version      : {VERSION}")
-    print(f"  Pooltoy      : {pooltoy['emoji']} {pooltoy['name']}")
-    print(f"  Config       : {pooltoy['file'].name}")
+    print(
+        f"  Pooltoy      : "
+        f"{pooltoy['emoji']} {pooltoy['name']}"
+    )
+    print(
+        f"  Config       : "
+        f"{pooltoy['file'].name}"
+    )
     print(f"  Model        : {MODEL}")
-    print(f"  Memory       : {len(memory)} messages")
-    print(f"  Temperature  : {TEMPERATURE}")
+    print(
+        f"  Memory       : "
+        f"{len(memory)} messages"
+    )
+    print(
+        f"  Temperature  : "
+        f"{TEMPERATURE}"
+    )
 
     print_line()
     print()
@@ -506,7 +634,10 @@ def show_help():
     ]
 
     for command, description in commands:
-        print(f"  {color(command, CYAN):<20}{description}")
+        print(
+            f"  {color(command, CYAN):<20}"
+            f"{description}"
+        )
 
     print_line()
     print()
@@ -525,8 +656,19 @@ def show_pooltoys(pooltoy):
 
     for item in pooltoys:
         selected = item["file"] == pooltoy["file"]
-        marker = color("●", GREEN) if selected else "○"
-        print(f"  {marker} {item['emoji']} {item['name']} {color(item['file'].name, DIM)}")
+
+        marker = (
+            color("●", GREEN)
+            if selected
+            else "○"
+        )
+
+        print(
+            f"  {marker} "
+            f"{item['emoji']} "
+            f"{item['name']} "
+            f"{color(item['file'].name, DIM)}"
+        )
 
     print_line()
     print()
@@ -537,13 +679,24 @@ def show_pooltoys(pooltoy):
 # ============================================================
 
 def reload_pooltoy(pooltoy):
-    new_config = load_pooltoy_config(pooltoy["file"])
+    new_config = load_pooltoy_config(
+        pooltoy["file"]
+    )
 
     if not new_config:
-        warning("Reload fallito, mantengo la configurazione precedente.")
+        warning(
+            "Reload fallito, mantengo "
+            "la configurazione precedente."
+        )
+
         return pooltoy
 
-    success(f"Reloaded {new_config['emoji']} {new_config['name']}")
+    success(
+        f"Reloaded "
+        f"{new_config['emoji']} "
+        f"{new_config['name']}"
+    )
+
     return new_config
 
 
@@ -563,29 +716,56 @@ def chat(preselect_name=None):
     show_banner()
 
     info("Initializing VPCS runtime...")
-    log.info("VPCS avviato (v%s)", VERSION)
+
+    log.info(
+        "VPCS avviato (v%s)",
+        VERSION,
+    )
 
     try:
         client = create_client()
+
     except SystemExit:
         raise
 
     success("Groq API connected.")
 
-    pooltoy = select_pooltoy(preselect_name)
+    pooltoy = select_pooltoy(
+        preselect_name
+    )
+
     memory = load_memory(pooltoy)
 
-    success(f"Memory loaded ({len(memory)} messages).")
+    success(
+        f"Memory loaded "
+        f"({len(memory)} messages)."
+    )
 
     print()
     print_line()
-    print(f"{pooltoy['emoji']} {color(pooltoy['name'], BOLD)} is ready.")
-    print(color("Type /help for commands.", DIM))
+
+    print(
+        f"{pooltoy['emoji']} "
+        f"{color(pooltoy['name'], BOLD)} "
+        f"is ready."
+    )
+
+    print(
+        color(
+            "Type /help for commands.",
+            DIM,
+        )
+    )
+
     print_line()
 
     while True:
+
         try:
-            user_input = input(make_prompt(pooltoy)).strip()
+            user_input = input(
+                make_prompt(pooltoy)
+            ).strip()
+
         except (KeyboardInterrupt, EOFError):
             print()
             print()
@@ -609,33 +789,67 @@ def chat(preselect_name=None):
             continue
 
         if command == "/status":
-            show_status(pooltoy, memory)
+            show_status(
+                pooltoy,
+                memory,
+            )
             continue
 
         if command == "/memory":
             print()
-            print(color(f"MEMORY — {pooltoy['name']}", BOLD))
+
+            print(
+                color(
+                    f"MEMORY — {pooltoy['name']}",
+                    BOLD,
+                )
+            )
+
             print_line()
 
             if not memory:
-                print(color("  Memory empty.", DIM))
+                print(
+                    color(
+                        "  Memory empty.",
+                        DIM,
+                    )
+                )
+
             else:
                 for item in memory:
                     role = item.get("role", "")
-                    content = item.get("content", "")
+                    content = item.get(
+                        "content",
+                        "",
+                    )
+
                     if role == "user":
-                        print(f"  You: {content}")
+                        print(
+                            f"  You: {content}"
+                        )
+
                     elif role == "assistant":
-                        print(f"  {pooltoy['name']}: {content}")
+                        print(
+                            f"  "
+                            f"{pooltoy['name']}: "
+                            f"{content}"
+                        )
 
             print_line()
             print()
+
             continue
 
         if command == "/clear":
             clear_memory(pooltoy)
+
             memory = []
-            success(f"Memory cleared for {pooltoy['name']}.")
+
+            success(
+                f"Memory cleared for "
+                f"{pooltoy['name']}."
+            )
+
             continue
 
         if command == "/pooltoys":
@@ -643,11 +857,18 @@ def chat(preselect_name=None):
             continue
 
         if command == "/reload":
-            pooltoy = reload_pooltoy(pooltoy)
+            pooltoy = reload_pooltoy(
+                pooltoy
+            )
+
             memory = load_memory(pooltoy)
+
             continue
 
-        # Messaggio normale verso l'AI
+        # ====================================================
+        # MESSAGGIO NORMALE VERSO L'AI
+        # ====================================================
+
         try:
             response = ask_ai(
                 client=client,
@@ -663,21 +884,46 @@ def chat(preselect_name=None):
             continue
 
         except Exception as e:
-            log.exception("Errore durante la richiesta AI")
+            log.exception(
+                "Errore durante la richiesta AI"
+            )
+
             print()
             error(f"AI error: {e}")
             print()
+
             continue
 
         print()
-        print(f"{pooltoy['emoji']} {color(pooltoy['name'], BOLD)}: {response}")
+
+        print(
+            f"{pooltoy['emoji']} "
+            f"{color(pooltoy['name'], BOLD)}: "
+            f"{response}"
+        )
+
         print()
 
-        memory.append({"role": "user", "content": user_input})
-        memory.append({"role": "assistant", "content": response})
+        memory.append(
+            {
+                "role": "user",
+                "content": user_input,
+            }
+        )
+
+        memory.append(
+            {
+                "role": "assistant",
+                "content": response,
+            }
+        )
+
         memory = memory[-MAX_MEMORY_MESSAGES:]
 
-        save_memory(pooltoy, memory)
+        save_memory(
+            pooltoy,
+            memory,
+        )
 
 
 # ============================================================
@@ -689,16 +935,21 @@ def parse_args():
         prog="vpcs",
         description="VPCS — Virtual Pooltoy Container System",
     )
+
     parser.add_argument(
-        "-p", "--pooltoy",
+        "-p",
+        "--pooltoy",
         metavar="NAME",
         help="Nome del pooltoy da caricare automaticamente",
     )
+
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Abilita log dettagliati anche su console",
     )
+
     return parser.parse_args()
 
 
@@ -710,10 +961,15 @@ def main():
     args = parse_args()
 
     global log
-    log = setup_logging(verbose=args.verbose)
+
+    log = setup_logging(
+        verbose=args.verbose
+    )
 
     try:
-        chat(preselect_name=args.pooltoy)
+        chat(
+            preselect_name=args.pooltoy
+        )
 
     except SystemExit:
         raise
@@ -726,9 +982,11 @@ def main():
 
     except Exception as e:
         log.exception("Errore fatale")
+
         print()
         error(f"Fatal error: {e}")
         print()
+
         sys.exit(1)
 
 
